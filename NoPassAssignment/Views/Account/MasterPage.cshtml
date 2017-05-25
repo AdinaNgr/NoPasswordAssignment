@@ -1,0 +1,18 @@
+﻿@{
+    ViewBag.Title = "Master Page";
+}
+
+@if (Session["UserName"] != null)
+{
+    <h2 class="text-success">Welcome, @Session["UserName"].ToString()!</h2>
+    <h2>You can enforce logout of: </h2>
+}
+
+@using (Html.BeginForm("LogOut", "Account", FormMethod.Post))
+{
+foreach (var activeUser in ViewBag.ActiveUsers)
+ {
+     <input name="userName" type="submit" value = @activeUser />
+ }
+}
+
