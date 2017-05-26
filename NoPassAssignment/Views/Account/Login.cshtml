@@ -3,12 +3,11 @@
 @{
     ViewBag.Title = "Log in";
 }
-
 <h2>@ViewBag.Title.</h2>
 <div class="row">
     <div class="col-md-8">
         <section id="loginForm">
-            @using (Html.BeginForm("Login", "Account", new { ReturnUrl = ViewBag.ReturnUrl }, FormMethod.Post, new { @class = "form-horizontal", role = "form" }))
+            @using (Html.BeginForm("Login", "Account", new { ViewBag.ReturnUrl }, FormMethod.Post, new { @class = "form-horizontal", role = "form" }))
             {
                 @Html.AntiForgeryToken()
                 <hr />
@@ -26,9 +25,16 @@
                         @Html.ValidationMessageFor(m => m.Password, "", new { @class = "text-danger" })
                     </div>
                 </div>
-               
+
+                <div class="container">  
+                    <div class="col-md-3">@Html.TextBoxFor(model => model.SecurityCode, new { @class = "form-control", @placeholder = "Enter the code" })</div>  
+                    <div class="col-md-3"><img alt="" src="~/Account/captcha" /></div>  
+                    @Html.ValidationMessageFor(model => model.SecurityCode, "", new { @class = "text-danger" })
+                </div>
+
+                <br/>
                 <div class="form-group">
-                    <div class="col-md-offset-2 col-md-10">
+                    <div class="col-md-offset-5 col-md-10">
                         <input type="submit" value="Log in" class="btn btn-default" />
                     </div>
                 </div>
@@ -36,7 +42,8 @@
         </section>
     </div>
 </div>
-
+<h4 style="color:red">@ViewBag.Message </h4>
 @section Scripts {
     @Scripts.Render("~/bundles/jqueryval")
+    @Styles.Render("~/Content/css")
 }

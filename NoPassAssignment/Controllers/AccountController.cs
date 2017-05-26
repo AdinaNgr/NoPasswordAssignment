@@ -1,9 +1,14 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Data.Entity.Migrations;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
 using System.Web.Mvc;
+using System.Web.Security;
 using Microsoft.AspNet.Identity;
 using Microsoft.AspNet.Identity.Owin;
 using Microsoft.Owin.Security;
@@ -75,81 +80,127 @@ namespace NoPassAssignment.Controllers
             }
         }
         
-        // GET: /Account/Login
         [AllowAnonymous]
         public ActionResult Login(string returnUrl)
         {
             ViewBag.ReturnUrl = returnUrl;
             return View();
         }
-
-        // POST: /Account/Login
+        
         [HttpPost]
+        [TestAttribute]
         [AllowAnonymous]
         [ValidateAntiForgeryToken]
         public async Task<ActionResult> Login(LoginViewModel model, string returnUrl)
         {
+            SqlMembershipProvider v = new SqlMembershipProvider();
+            int incrementalDelay;
+            if (HttpContext.Application[Request.UserHostAddress] != null)
+            {
+                incrementalDelay = (int) HttpContext.Application[Request.UserHostAddress];
+                await Task.Delay(incrementalDelay * 1000);
+            }
             if (!ModelState.IsValid)
             {
                 return View(model);
             }
-
-            var result = await SignInManager.PasswordSignInAsync(model.Username, model.Password, false, shouldLockout: false);
-            switch (result)
+            if (model.SecurityCode == Session["securityCode"].ToString())
             {
-                case SignInStatus.Success:
-                    var user = UserManager.FindByName(model.Username);
-                    Session["UserName"] = user.UserName;
-                    Session["UserId"] = user.Id;
-                    CreateSessionRecord(user);
-                    AddUserToActiveUsers(model.Username);
+            FormsAuthentication.SetAuthCookie(model.Username, false);
+                
+                var result =
+                    await SignInManager.PasswordSignInAsync(model.Username, model.Password, false, false);
+                switch (result)
+                {
+                    case SignInStatus.Success:
+                        // reset incremental delay on successful login
+                        if (HttpContext.Application[Request.UserHostAddress] != null)
+                        {
+                            HttpContext.Application.Remove(Request.UserHostAddress);
+                        }
+                        var user = UserManager.FindByName(model.Username);
+                        AddVariablesToCurrentSession(user);
+                        CreateSessionRecord(user);
+                        AddUserToActiveUsers(model.Username);
 
+                        var userRole = GetUserRole(user.UserName);
 
-                    //HttpCookie myCookie = new HttpCookie("MyTestCookie");
-                    //DateTime now = DateTime.Now;
+                        if (userRole.Equals("NormalUser"))
+                        {
+                            return View("WelcomePageForNormalUser");
+                        }
+                        else if (userRole.Equals("MasterUser"))
+                        {
+                            ViewBag.ActiveUsers = GetActiveUsersWithoutUser((string) Session["UserName"]);
+                            return View("MasterPage");
+                        }
+                        return RedirectToAction("Login", "Account");
+                    //error
+                    default:
+                        if (HttpContext.Application[Request.UserHostAddress] == null)
+                        {
+                            HttpCookie loginCookie1 = new HttpCookie("loginAttempts");
+                            Response.Cookies["loginAttempts"].Value = "1";
+                            Response.Cookies.Add(loginCookie1);
+                            incrementalDelay = 1;
+                        }
+                        else
+                        {
+                            incrementalDelay = (int) HttpContext.Application[Request.UserHostAddress] * 2;
+                        }
+                        HttpContext.Application[Request.UserHostAddress] = incrementalDelay;
+                        ViewBag.Message = "Invalid login attempt";
+                        return View(model);
 
-                    //// Set the cookie value.
-                    //myCookie.Value = now.ToString();
-                    //// Set the cookie expiration date.
-                    //myCookie.Expires = now.AddMinutes(1);
-
-                    //// Add the cookie.
-                    //Response.Cookies.Add(myCookie);
-
-                    //SessionIDManager manager = new SessionIDManager();
-
-                    //Session["UserID"] = user.Id;
-                    //var role = UserManager.FindByName(user.UserName).Roles;
-                    //Session["UserName"] = user.UserName;
-                    //Session["UserRole"] = user.Roles;
-                    //FormsAuthentication.SetAuthCookie(user.UserName, false);
-                    var userRole = GetUserRole(user.UserName);
-                    
-                    if (userRole.Equals("NormalUser"))
-                    {
-                        return View("WelcomePageForNormalUser");
-                    }
-                    else if (userRole.Equals("MasterUser"))
-                    {
-                        ViewBag.ActiveUsers = GetActiveUsersWithoutCurrentUser();
-                        return View("MasterPage");
-                    }
-                    Session.Abandon();
-                    return RedirectToAction("Login", "Account");
-                default:
-                    return View("Error");
+                }
             }
+            ViewBag.Message = "Invalid security code.";
+            return View(model); 
+        }
+        [AllowAnonymous]
+        public ActionResult Captcha()
+        {
+            var bitmap = new Bitmap(80, 40);
+            var objGraphics = Graphics.FromImage(bitmap);
+            objGraphics.Clear(Color.DimGray);
+            objGraphics.TextRenderingHint = TextRenderingHint.AntiAlias;
+            
+            var font = new Font("Calibri", 14, FontStyle.Bold);
+            var securityCode = "";
+            var myIntArray = new int[5];
+            int x;
+
+            var autoRand = new Random();
+            for (x = 0; x < 5; x++)
+            {
+                myIntArray[x] = Convert.ToInt32(autoRand.Next(0, 9));
+                securityCode += (myIntArray[x].ToString());
+            }
+            Session.Add("securityCode", securityCode);
+            objGraphics.DrawString(securityCode, font, Brushes.White, 4, 4);
+            Response.ContentType = "image/GIF";
+            bitmap.Save(Response.OutputStream, ImageFormat.Gif);
+
+            font.Dispose();
+            objGraphics.Dispose();
+            bitmap.Dispose();
+
+            return new EmptyResult();
+        }
+        private void AddVariablesToCurrentSession(ApplicationUser user)
+        {
+            Session["UserName"] = user.UserName;
+            Session["UserId"] = user.Id;
         }
 
-        private List<string> GetActiveUsersWithoutCurrentUser()
+        private List<string> GetActiveUsersWithoutUser(string userName)
         {
             var activeUsers = (List<string>)HttpContext.Application["activeUsers"];
-            var currentUser = Session["UserName"];
-            activeUsers.RemoveAll(u => u == (string)currentUser);
+            activeUsers.RemoveAll(u => u == userName);
             return activeUsers;
         }
 
-        /*We know that each user has only one role assigned */
+        /* We know that each user has only one role assigned */
         private string GetUserRole(string username)
         {
             var listOfRoleIds = UserManager.FindByName(username).Roles.Select(x => x.RoleId).ToList();
@@ -177,6 +228,7 @@ namespace NoPassAssignment.Controllers
            if(result != null && result.SessionExpired == 1)
             {
                 RemoveSessionRecordFromDb(result);
+                Session.Abandon();
                 return View("Login");
             }
             return View(Request.RawUrl);
@@ -199,7 +251,6 @@ namespace NoPassAssignment.Controllers
                 result.SessionExpired = 1;
                 DbContext.SaveChanges();
             }
-            //Session.Abandon();
             return View("SuccessfullyLoggedOut");
         }
 
@@ -222,7 +273,23 @@ namespace NoPassAssignment.Controllers
 
             base.Dispose(disposing);
         }
-
+        public class TestAttribute : AuthorizeAttribute
+        {
+            protected override bool AuthorizeCore(HttpContextBase httpContext)
+            {
+                int result;
+                HttpCookie cookie = httpContext.Request.Cookies.Get("loginAttempts");
+                Int32.TryParse(cookie.Value, out result);
+                if (result == 5)
+                {
+                    httpContext.Response.StatusCode = 401;
+                    httpContext.Response.End();
+                    return false;
+                }
+                else
+                    return true;
+            }
+        }
         #region Helpers
         // Used for XSRF protection when adding external logins
         private const string XsrfKey = "XsrfId";
