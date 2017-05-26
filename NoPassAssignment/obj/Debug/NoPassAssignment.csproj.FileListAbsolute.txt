@@ -79,7 +79,6 @@ E:\noPassword\NoPassAssignment\NoPassAssignment\bin\Microsoft.Owin.Security.Twit
 E:\noPassword\NoPassAssignment\NoPassAssignment\bin\Microsoft.Owin.Security.MicrosoftAccount.xml
 E:\noPassword\NoPassAssignment\NoPassAssignment\obj\Debug\NoPassAssignment.dll
 E:\noPassword\NoPassAssignment\NoPassAssignment\obj\Debug\NoPassAssignment.pdb
-E:\noPassword\NoPassAssignment\NoPassAssignment\obj\Debug\NoPassAssignment.csprojResolveAssemblyReference.cache
 E:\noPassword\NoPassAssignment\NoPassAssignment\obj\Debug\NoPassAssignment.Migrations.InitialCreate.resources
 E:\noPassword\NoPassAssignment\NoPassAssignment\obj\Debug\NoPassAssignment.csproj.GenerateResource.Cache
 E:\noPassword\NoPassAssignment\NoPassAssignment\obj\Debug\NoPassAssignment.Migrations.firstMigration.resources

@@ -1,8 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Configuration;
-using System.Data.Entity;
-using System.Data.Entity.Migrations;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
@@ -17,7 +13,7 @@ using NoPassAssignment.Models;
 namespace NoPassAssignment.Controllers
 {
     [Authorize]
-    public class AccountController : Controller
+    public partial class AccountController : Controller
     {
         private ApplicationSignInManager _signInManager;
         private ApplicationUserManager _userManager;
@@ -113,7 +109,6 @@ namespace NoPassAssignment.Controllers
 
                     case SignInStatus.LockedOut:
                         IncrementDelay();
-                        
                         user = UserManager.FindByName(model.Username);
                         if (ShouldBeUnlocked(user))
                         {
@@ -123,10 +118,6 @@ namespace NoPassAssignment.Controllers
                         return View(model);
 
                     default:
-                        // var incrementalDelay = HttpContext.Application[Request.UserHostAddress] == null
-                        //    ? 1
-                        //    : (int)HttpContext.Application[Request.UserHostAddress] * 2;
-                        //HttpContext.Application[Request.UserHostAddress] = incrementalDelay;
                         IncrementDelay();
                         user = UserManager.FindByName(model.Username);
                         ViewBag.Message = "Failed login. Unauthorized user";
@@ -146,22 +137,6 @@ namespace NoPassAssignment.Controllers
             IncrementDelay();
             return View(model);
         }
-
-        [HttpGet]
-        public ActionResult CheckIfSessionExpired()
-        {
-            var currentUserId = (string)Session["UserId"];
-            var result = DbContext.SessionRecords.SingleOrDefault(session => session.UserId == currentUserId);
-
-            if (result != null && result.SessionExpired == 1)
-            {
-                RemoveSessionRecordFromDb(result);
-                Session.Abandon();
-                return View("Login");
-            }
-            return View(Request.RawUrl);
-        }
-
         [HttpPost]
         public ActionResult LogOut(string userName)
         {
@@ -174,31 +149,6 @@ namespace NoPassAssignment.Controllers
             }
             return View("SuccessfullyLoggedOut");
         }
-
-
-        private void ModifyUserLoginFailuresAttempts(ApplicationUser user)
-        {
-            IncreaseAccessFailedCount(user);
-            ViewBag.Message = "Invalid login attempt";
-            if (EnableLockoutIfNecessary(user))
-            {
-                ViewBag.Message = "Too many login failures! User locked";
-            }
-        }
-
-        private bool UserCorrectlyIntroducedSecurityCode(LoginViewModel model)
-        {
-            return model.SecurityCode.Equals(Session["securityCode"].ToString());
-        }
-
-        private void IncrementDelay()
-        {
-            var incrementalDelay = HttpContext.Application[Request.UserHostAddress] == null
-                ? 1
-                : (int)HttpContext.Application[Request.UserHostAddress] * 2;
-            HttpContext.Application[Request.UserHostAddress] = incrementalDelay;
-        }
-
         private ViewResult SignIn(ApplicationUser user)
         {
             // reset incremental delay on successful login
@@ -223,52 +173,15 @@ namespace NoPassAssignment.Controllers
             }
             ViewBag.Message = "Failed login. Unauthorized user";
             return View("Login");
-
         }
 
-        private bool ShouldBeUnlocked(ApplicationUser user)
+        private void IncrementDelay()
         {
-            if (user.LockoutEnabled)
-            {
-                DateTime endDate = (DateTime)user.LockoutEndDateUtc;
-                var currentDate = DateTime.Now;
-                var difference = endDate - currentDate;
-
-                if (difference.Hours >= Int32.Parse(ConfigurationSettings.AppSettings.Get("NoHoursLockUser")))
-                {
-                    user.LockoutEnabled = false;
-                    user.AccessFailedCount = 0;
-                    DbContext.Entry(user).State = EntityState.Modified;
-                    DbContext.SaveChanges();
-                    return true;
-                }
-            }
-            return false;
+            var incrementalDelay = HttpContext.Application[Request.UserHostAddress] == null
+                ? 1
+                : (int)HttpContext.Application[Request.UserHostAddress] * 2;
+            HttpContext.Application[Request.UserHostAddress] = incrementalDelay;
         }
-
-        private Boolean EnableLockoutIfNecessary(ApplicationUser user)
-        {
-            Boolean shouldBeLocked = false;
-            var accessFailedCount = user.AccessFailedCount;
-            if (accessFailedCount > Int32.Parse(ConfigurationSettings.AppSettings.Get("MaximumLoginAttempts")))
-            {
-                shouldBeLocked = true;
-                user.LockoutEnabled = true;
-                var lockoutEndDate = DateTime.Now.AddMinutes(Int32.Parse(ConfigurationSettings.AppSettings.Get("NoHoursLockUser")));
-                user.LockoutEndDateUtc = lockoutEndDate;
-                DbContext.Entry(user).State = EntityState.Modified;
-                DbContext.SaveChanges();
-            }
-            return shouldBeLocked;
-        }
-
-        private void IncreaseAccessFailedCount(ApplicationUser user)
-        {
-            user.AccessFailedCount += 1;
-            DbContext.Entry(user).State = EntityState.Modified;
-            DbContext.SaveChanges();
-        }
-
         [AllowAnonymous]
         public ActionResult Captcha()
         {
@@ -299,66 +212,5 @@ namespace NoPassAssignment.Controllers
 
             return new EmptyResult();
         }
-        private void AddVariablesToCurrentSession(ApplicationUser user)
-        {
-            Session["UserName"] = user.UserName;
-            Session["UserId"] = user.Id;
-        }
-
-        private List<string> GetActiveUsersWithoutUser(string userName)
-        {
-            var activeUsers = (List<string>)HttpContext.Application["activeUsers"];
-            activeUsers.RemoveAll(u => u == userName);
-            return activeUsers;
-        }
-
-        /* We know that each user has only one role assigned */
-        private string GetUserRole(string username)
-        {
-            var listOfRoleIds = UserManager.FindByName(username).Roles.Select(x => x.RoleId).ToList();
-            return RoleManager.FindById(listOfRoleIds[0]).Name;
-        }
-
-        private void CreateSessionRecord(ApplicationUser user)
-        {
-            SessionRecords session = new SessionRecords() { SessionId = Session.SessionID, UserId = user.Id, SessionExpired = 0 };
-            DbContext.SessionRecords.AddOrUpdate(session);
-            DbContext.SaveChanges();
-        }
-
-        private void AddUserToActiveUsers(string userName)
-        {
-            var activeUsers = (List<string>)HttpContext.Application["activeUsers"];
-            activeUsers.Add(userName);
-        }
-       
-
-        private void RemoveSessionRecordFromDb(SessionRecords sessionRecord)
-        {
-            DbContext.SessionRecords.Remove(sessionRecord);
-            DbContext.SaveChanges();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                if (_userManager != null)
-                {
-                    _userManager.Dispose();
-                    _userManager = null;
-                }
-
-                if (_signInManager != null)
-                {
-                    _signInManager.Dispose();
-                    _signInManager = null;
-                }
-            }
-
-            base.Dispose(disposing);
-        }
-
-
     }
 }
