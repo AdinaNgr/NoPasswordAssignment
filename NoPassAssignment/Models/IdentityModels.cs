@@ -22,13 +22,7 @@ namespace NoPassAssignment.Models
         }
     }
 
-    public class SessionRecords
-    {
-        [Key]
-        public String SessionId { get; set; }
-        public String UserId { get; set; }
-        public int SessionExpired { get; set; }
-    }
+    
     public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
     {
         public ApplicationDbContext()
@@ -36,7 +30,7 @@ namespace NoPassAssignment.Models
         {
         }
         public DbSet<SessionRecords> SessionRecords { get; set; }
-
+        
         public static ApplicationDbContext Create()
         {
             return new ApplicationDbContext();

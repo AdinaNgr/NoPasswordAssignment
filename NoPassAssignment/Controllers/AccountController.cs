@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
+using System.Data.Entity;
 using System.Data.Entity.Migrations;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -8,10 +10,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
 using System.Web.Mvc;
-using System.Web.Security;
 using Microsoft.AspNet.Identity;
 using Microsoft.AspNet.Identity.Owin;
-using Microsoft.Owin.Security;
 using NoPassAssignment.Models;
 
 namespace NoPassAssignment.Controllers
@@ -79,84 +79,196 @@ namespace NoPassAssignment.Controllers
                 _userManager = value;
             }
         }
-        
+
         [AllowAnonymous]
         public ActionResult Login(string returnUrl)
         {
             ViewBag.ReturnUrl = returnUrl;
             return View();
         }
-        
+
         [HttpPost]
-        [TestAttribute]
         [AllowAnonymous]
         [ValidateAntiForgeryToken]
         public async Task<ActionResult> Login(LoginViewModel model, string returnUrl)
         {
-            SqlMembershipProvider v = new SqlMembershipProvider();
-            int incrementalDelay;
             if (HttpContext.Application[Request.UserHostAddress] != null)
             {
-                incrementalDelay = (int) HttpContext.Application[Request.UserHostAddress];
-                await Task.Delay(incrementalDelay * 1000);
+                var incrementalDelay = HttpContext.Application[Request.UserHostAddress];
+                await Task.Delay((int) incrementalDelay * 1000);
             }
             if (!ModelState.IsValid)
             {
                 return View(model);
             }
-            if (model.SecurityCode == Session["securityCode"].ToString())
+            if (UserCorrectlyIntroducedSecurityCode(model))
             {
-            FormsAuthentication.SetAuthCookie(model.Username, false);
-                
                 var result =
                     await SignInManager.PasswordSignInAsync(model.Username, model.Password, false, false);
                 switch (result)
                 {
                     case SignInStatus.Success:
-                        // reset incremental delay on successful login
-                        if (HttpContext.Application[Request.UserHostAddress] != null)
-                        {
-                            HttpContext.Application.Remove(Request.UserHostAddress);
-                        }
                         var user = UserManager.FindByName(model.Username);
-                        AddVariablesToCurrentSession(user);
-                        CreateSessionRecord(user);
-                        AddUserToActiveUsers(model.Username);
+                        return SignIn(user);
 
-                        var userRole = GetUserRole(user.UserName);
-
-                        if (userRole.Equals("NormalUser"))
+                    case SignInStatus.LockedOut:
+                        IncrementDelay();
+                        
+                        user = UserManager.FindByName(model.Username);
+                        if (ShouldBeUnlocked(user))
                         {
-                            return View("WelcomePageForNormalUser");
+                            return SignIn(user);
                         }
-                        else if (userRole.Equals("MasterUser"))
-                        {
-                            ViewBag.ActiveUsers = GetActiveUsersWithoutUser((string) Session["UserName"]);
-                            return View("MasterPage");
-                        }
-                        return RedirectToAction("Login", "Account");
-                    //error
-                    default:
-                        if (HttpContext.Application[Request.UserHostAddress] == null)
-                        {
-                            HttpCookie loginCookie1 = new HttpCookie("loginAttempts");
-                            Response.Cookies["loginAttempts"].Value = "1";
-                            Response.Cookies.Add(loginCookie1);
-                            incrementalDelay = 1;
-                        }
-                        else
-                        {
-                            incrementalDelay = (int) HttpContext.Application[Request.UserHostAddress] * 2;
-                        }
-                        HttpContext.Application[Request.UserHostAddress] = incrementalDelay;
-                        ViewBag.Message = "Invalid login attempt";
+                        ViewBag.Message = "User locked";
                         return View(model);
 
+                    default:
+                        // var incrementalDelay = HttpContext.Application[Request.UserHostAddress] == null
+                        //    ? 1
+                        //    : (int)HttpContext.Application[Request.UserHostAddress] * 2;
+                        //HttpContext.Application[Request.UserHostAddress] = incrementalDelay;
+                        IncrementDelay();
+                        user = UserManager.FindByName(model.Username);
+                        ViewBag.Message = "Failed login. Unauthorized user";
+                        if (user != null)
+                        {
+                            ModifyUserLoginFailuresAttempts(user);
+                        }
+                        return View(model);
                 }
             }
+            var currentUser = UserManager.FindByName(model.Username);
             ViewBag.Message = "Invalid security code.";
-            return View(model); 
+            if (currentUser != null)
+            {
+                ModifyUserLoginFailuresAttempts(currentUser);
+            }
+            IncrementDelay();
+            return View(model);
         }
+
+        [HttpGet]
+        public ActionResult CheckIfSessionExpired()
+        {
+            var currentUserId = (string)Session["UserId"];
+            var result = DbContext.SessionRecords.SingleOrDefault(session => session.UserId == currentUserId);
+
+            if (result != null && result.SessionExpired == 1)
+            {
+                RemoveSessionRecordFromDb(result);
+                Session.Abandon();
+                return View("Login");
+            }
+            return View(Request.RawUrl);
+        }
+
+        [HttpPost]
+        public ActionResult LogOut(string userName)
+        {
+            var userId = UserManager.FindByName(userName).Id;
+            var result = DbContext.SessionRecords.SingleOrDefault(session => session.UserId == userId);
+            if (result != null)
+            {
+                result.SessionExpired = 1;
+                DbContext.SaveChanges();
+            }
+            return View("SuccessfullyLoggedOut");
+        }
+
+
+        private void ModifyUserLoginFailuresAttempts(ApplicationUser user)
+        {
+            IncreaseAccessFailedCount(user);
+            ViewBag.Message = "Invalid login attempt";
+            if (EnableLockoutIfNecessary(user))
+            {
+                ViewBag.Message = "Too many login failures! User locked";
+            }
+        }
+
+        private bool UserCorrectlyIntroducedSecurityCode(LoginViewModel model)
+        {
+            return model.SecurityCode.Equals(Session["securityCode"].ToString());
+        }
+
+        private void IncrementDelay()
+        {
+            var incrementalDelay = HttpContext.Application[Request.UserHostAddress] == null
+                ? 1
+                : (int)HttpContext.Application[Request.UserHostAddress] * 2;
+            HttpContext.Application[Request.UserHostAddress] = incrementalDelay;
+        }
+
+        private ViewResult SignIn(ApplicationUser user)
+        {
+            // reset incremental delay on successful login
+            if (HttpContext.Application[Request.UserHostAddress] != null)
+            {
+                HttpContext.Application.Remove(Request.UserHostAddress);
+            }
+            AddVariablesToCurrentSession(user);
+            CreateSessionRecord(user);
+            AddUserToActiveUsers(user.UserName);
+
+            var userRole = GetUserRole(user.UserName);
+
+            if (userRole.Equals("NormalUser"))
+            {
+                return View("WelcomePageForNormalUser");
+            }
+            if (userRole.Equals("MasterUser"))
+            {
+                ViewBag.ActiveUsers = GetActiveUsersWithoutUser((string)Session["UserName"]);
+                return View("MasterPage");
+            }
+            ViewBag.Message = "Failed login. Unauthorized user";
+            return View("Login");
+
+        }
+
+        private bool ShouldBeUnlocked(ApplicationUser user)
+        {
+            if (user.LockoutEnabled)
+            {
+                DateTime endDate = (DateTime)user.LockoutEndDateUtc;
+                var currentDate = DateTime.Now;
+                var difference = endDate - currentDate;
+
+                if (difference.Hours >= Int32.Parse(ConfigurationSettings.AppSettings.Get("NoHoursLockUser")))
+                {
+                    user.LockoutEnabled = false;
+                    user.AccessFailedCount = 0;
+                    DbContext.Entry(user).State = EntityState.Modified;
+                    DbContext.SaveChanges();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private Boolean EnableLockoutIfNecessary(ApplicationUser user)
+        {
+            Boolean shouldBeLocked = false;
+            var accessFailedCount = user.AccessFailedCount;
+            if (accessFailedCount > Int32.Parse(ConfigurationSettings.AppSettings.Get("MaximumLoginAttempts")))
+            {
+                shouldBeLocked = true;
+                user.LockoutEnabled = true;
+                var lockoutEndDate = DateTime.Now.AddMinutes(Int32.Parse(ConfigurationSettings.AppSettings.Get("NoHoursLockUser")));
+                user.LockoutEndDateUtc = lockoutEndDate;
+                DbContext.Entry(user).State = EntityState.Modified;
+                DbContext.SaveChanges();
+            }
+            return shouldBeLocked;
+        }
+
+        private void IncreaseAccessFailedCount(ApplicationUser user)
+        {
+            user.AccessFailedCount += 1;
+            DbContext.Entry(user).State = EntityState.Modified;
+            DbContext.SaveChanges();
+        }
+
         [AllowAnonymous]
         public ActionResult Captcha()
         {
@@ -164,7 +276,7 @@ namespace NoPassAssignment.Controllers
             var objGraphics = Graphics.FromImage(bitmap);
             objGraphics.Clear(Color.DimGray);
             objGraphics.TextRenderingHint = TextRenderingHint.AntiAlias;
-            
+
             var font = new Font("Calibri", 14, FontStyle.Bold);
             var securityCode = "";
             var myIntArray = new int[5];
@@ -219,39 +331,12 @@ namespace NoPassAssignment.Controllers
             var activeUsers = (List<string>)HttpContext.Application["activeUsers"];
             activeUsers.Add(userName);
         }
-        [HttpGet]
-        public ActionResult CheckIfSessionExpired()
-        {
-            var currentUserId = (string)Session["UserId"];
-            var result = DbContext.SessionRecords.SingleOrDefault(session => session.UserId == currentUserId);
-           
-           if(result != null && result.SessionExpired == 1)
-            {
-                RemoveSessionRecordFromDb(result);
-                Session.Abandon();
-                return View("Login");
-            }
-            return View(Request.RawUrl);
-
-        }
+       
 
         private void RemoveSessionRecordFromDb(SessionRecords sessionRecord)
         {
             DbContext.SessionRecords.Remove(sessionRecord);
             DbContext.SaveChanges();
-        }
-
-        [HttpPost]
-        public ActionResult LogOut(string userName)
-        {
-            var userId = UserManager.FindByName(userName).Id;
-            var result = DbContext.SessionRecords.SingleOrDefault(session => session.UserId == userId);
-            if (result != null)
-            {
-                result.SessionExpired = 1;
-                DbContext.SaveChanges();
-            }
-            return View("SuccessfullyLoggedOut");
         }
 
         protected override void Dispose(bool disposing)
@@ -273,56 +358,7 @@ namespace NoPassAssignment.Controllers
 
             base.Dispose(disposing);
         }
-        public class TestAttribute : AuthorizeAttribute
-        {
-            protected override bool AuthorizeCore(HttpContextBase httpContext)
-            {
-                int result;
-                HttpCookie cookie = httpContext.Request.Cookies.Get("loginAttempts");
-                Int32.TryParse(cookie.Value, out result);
-                if (result == 5)
-                {
-                    httpContext.Response.StatusCode = 401;
-                    httpContext.Response.End();
-                    return false;
-                }
-                else
-                    return true;
-            }
-        }
-        #region Helpers
-        // Used for XSRF protection when adding external logins
-        private const string XsrfKey = "XsrfId";
 
 
-        internal class ChallengeResult : HttpUnauthorizedResult
-        {
-            public ChallengeResult(string provider, string redirectUri)
-                : this(provider, redirectUri, null)
-            {
-            }
-
-            public ChallengeResult(string provider, string redirectUri, string userId)
-            {
-                LoginProvider = provider;
-                RedirectUri = redirectUri;
-                UserId = userId;
-            }
-
-            public string LoginProvider { get; set; }
-            public string RedirectUri { get; set; }
-            public string UserId { get; set; }
-
-            public override void ExecuteResult(ControllerContext context)
-            {
-                var properties = new AuthenticationProperties { RedirectUri = RedirectUri };
-                if (UserId != null)
-                {
-                    properties.Dictionary[XsrfKey] = UserId;
-                }
-                context.HttpContext.GetOwinContext().Authentication.Challenge(properties, LoginProvider);
-            }
-        }
-        #endregion
     }
 }
