@@ -69,7 +69,7 @@ namespace NoPassAssignment.Controllers
             }
             return false;
         }
-        /* We know that each user has only one role assigned */
+        /* We know that, in this case, each user has only one role assigned */
         private string GetUserRole(string username)
         {
             var listOfRoleIds = UserManager.FindByName(username).Roles.Select(x => x.RoleId).ToList();

@@ -1,5 +1,4 @@
-﻿
-@{
+﻿@{
     ViewBag.Title = "Welcome";
 }
 
@@ -16,7 +15,6 @@
             $.get("@Url.Action("CheckIfSessionExpired", "Account")", {}, function () {
                 var url = '@Url.Action("Login", "Account")';
                 window.location.href = url;
-                
             });
         }, 4000)
 </script>
