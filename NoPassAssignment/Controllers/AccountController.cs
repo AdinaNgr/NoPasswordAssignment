@@ -2,6 +2,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
@@ -88,54 +89,85 @@ namespace NoPassAssignment.Controllers
         [ValidateAntiForgeryToken]
         public async Task<ActionResult> Login(LoginViewModel model, string returnUrl)
         {
-            if (HttpContext.Application[Request.UserHostAddress] != null)
-            {
-                var incrementalDelay = HttpContext.Application[Request.UserHostAddress];
-                await Task.Delay((int) incrementalDelay * 1000);
-            }
-            if (!ModelState.IsValid)
-            {
-                return View(model);
-            }
-            if (UserCorrectlyIntroducedSecurityCode(model))
-            {
-                var result =
-                    await SignInManager.PasswordSignInAsync(model.Username, model.Password, false, false);
-                switch (result)
-                {
-                    case SignInStatus.Success:
-                        var user = UserManager.FindByName(model.Username);
-                        return SignIn(user);
+            EncryptDecrypt(model);
+            return View();
+            //if (HttpContext.Application[Request.UserHostAddress] != null)
+            //{
+            //    var incrementalDelay = HttpContext.Application[Request.UserHostAddress];
+            //    await Task.Delay((int) incrementalDelay * 1000);
+            //}
+            //if (!ModelState.IsValid)
+            //{
+            //    return View(model);
+            //}
+            //if (UserCorrectlyIntroducedSecurityCode(model))
+            //{
+            //    var result =
+            //        await SignInManager.PasswordSignInAsync(model.Username, model.Password, false, false);
+            //    switch (result)
+            //    {
+            //        case SignInStatus.Success:
+            //            var user = UserManager.FindByName(model.Username);
+            //            return SignIn(user);
 
-                    case SignInStatus.LockedOut:
-                        IncrementDelay();
-                        user = UserManager.FindByName(model.Username);
-                        if (ShouldBeUnlocked(user))
-                        {
-                            return SignIn(user);
-                        }
-                        ViewBag.Message = "User locked";
-                        return View(model);
+            //        case SignInStatus.LockedOut:
+            //            IncrementDelay();
+            //            user = UserManager.FindByName(model.Username);
+            //            if (ShouldBeUnlocked(user))
+            //            {
+            //                return SignIn(user);
+            //            }
+            //            ViewBag.Message = "User locked";
+            //            return View(model);
 
-                    default:
-                        IncrementDelay();
-                        user = UserManager.FindByName(model.Username);
-                        ViewBag.Message = "Failed login. Unauthorized user";
-                        if (user != null)
-                        {
-                            ModifyUserLoginFailuresAttempts(user);
-                        }
-                        return View(model);
-                }
-            }
-            var currentUser = UserManager.FindByName(model.Username);
-            ViewBag.Message = "Invalid security code.";
-            if (currentUser != null)
+            //        default:
+            //            IncrementDelay();
+            //            user = UserManager.FindByName(model.Username);
+            //            ViewBag.Message = "Failed login. Unauthorized user";
+            //            if (user != null)
+            //            {
+            //                ModifyUserLoginFailuresAttempts(user);
+            //            }
+            //            return View(model);
+            //    }
+            //}
+            //var currentUser = UserManager.FindByName(model.Username);
+            //ViewBag.Message = "Invalid security code.";
+            //if (currentUser != null)
+            //{
+            //    ModifyUserLoginFailuresAttempts(currentUser);
+            //}
+            //IncrementDelay();
+            //return View(model);
+        }
+        public void EncryptDecrypt(LoginViewModel model)
+        {
+            var keyAndIv = CreateKeyAndIv();
+            var encryptedPasswordUsingAES1 = EncryptDataUsginAes256(model.Username, keyAndIv.Item1, keyAndIv.Item2);
+
+            ViewBag.EncryptedData = System.Text.Encoding.Default.GetString(encryptedPasswordUsingAES1);
+            var decryptedDataInBytes = EncryptAESKeyAndDecryptUsingRSA(keyAndIv, encryptedPasswordUsingAES1, keyAndIv);
+
+            byte comma = 44;
+            var index = Array.IndexOf(decryptedDataInBytes, comma);
+            var decryptedKey = CreateNewByteArray(index, decryptedDataInBytes, 0, index);
+            var decryptedIV = CreateNewByteArray(decryptedDataInBytes.Length - index - 1, decryptedDataInBytes, index + 1, decryptedDataInBytes.Length);
+
+            var result = DecryptUsingAes(encryptedPasswordUsingAES1, decryptedKey, decryptedIV);
+            ViewBag.DecryptedData = result;
+
+        }
+
+        public byte[] CreateNewByteArray(int size, byte[] concatenatedKeyAndIv, int fromIndex, int toIndex)
+        {
+            var ms = new MemoryStream(new byte[size], 0, size, true, true);
+            var byte1 = new byte[size];
+            for (int i = fromIndex; i < toIndex; i++)
             {
-                ModifyUserLoginFailuresAttempts(currentUser);
+                ms.Write(new Byte[] { concatenatedKeyAndIv[i] }, 0, 1);
             }
-            IncrementDelay();
-            return View(model);
+            byte[] concatenatedKeyAndIvBytes = ms.GetBuffer();
+            return concatenatedKeyAndIvBytes;
         }
         [HttpPost]
         public ActionResult LogOut(string userName)
